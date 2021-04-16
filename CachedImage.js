@@ -12,11 +12,12 @@ const flattenStyle = ReactNative.StyleSheet.flatten;
 
 const ImageCacheManager = require('./ImageCacheManager');
 
+const NetInfo = require('@react-native-community/netinfo');
+
 const {
     View,
     ImageBackground,
     ActivityIndicator,
-    NetInfo,
     Platform,
     StyleSheet,
 } = ReactNative;
@@ -39,9 +40,27 @@ function getImageProps(props) {
     return _.omit(props, ['source', 'defaultSource', 'fallbackSource', 'LoadingIndicator', 'activityIndicatorProps', 'style', 'useQueryParamsInCacheKey', 'renderImage', 'resolveHeaders']);
 }
 
-const CACHED_IMAGE_REF = 'cachedImage';
-
 class CachedImage extends React.Component {
+
+    constructor(props) {
+        super(props);
+        this._isMounted = false;
+        this.unsubscribable = null;
+        this.state = {
+            isCacheable: true,
+            cachedImagePath: null,
+            networkAvailable: true
+        };
+
+
+        this.CACHED_IMAGE_REF = React.createRef();
+        this.getImageCacheManagerOptions = this.getImageCacheManagerOptions.bind(this);
+        this.getImageCacheManager = this.getImageCacheManager.bind(this);
+        this.safeSetState = this.safeSetState.bind(this);
+        this.handleConnectivityChange = this.handleConnectivityChange.bind(this);
+        this.processSource = this.processSource.bind(this);
+        this.renderLoader = this.renderLoader.bind(this);
+    }
 
     static propTypes = {
         renderImage: PropTypes.func.isRequired,
@@ -52,7 +71,7 @@ class CachedImage extends React.Component {
     };
 
     static defaultProps = {
-            renderImage: props => (<ImageBackground imageStyle={props.style} ref={CACHED_IMAGE_REF} {...props} />),
+            renderImage: props => (<ImageBackground imageStyle={props.style} ref={this.CACHED_IMAGE_REF} {...props} />),
             activityIndicatorProps: {},
     };
 
@@ -60,31 +79,14 @@ class CachedImage extends React.Component {
         getImageCacheManager: PropTypes.func,
     };
 
-    constructor(props) {
-        super(props);
-        this._isMounted = false;
-        this.state = {
-            isCacheable: true,
-            cachedImagePath: null,
-            networkAvailable: true
-        };
-
-        this.getImageCacheManagerOptions = this.getImageCacheManagerOptions.bind(this);
-        this.getImageCacheManager = this.getImageCacheManager.bind(this);
-        this.safeSetState = this.safeSetState.bind(this);
-        this.handleConnectivityChange = this.handleConnectivityChange.bind(this);
-        this.processSource = this.processSource.bind(this);
-        this.renderLoader = this.renderLoader.bind(this);
-    }
-
-    componentWillMount() {
+    componentDidMount() {
         this._isMounted = true;
-        NetInfo.isConnected.addEventListener('connectionChange', this.handleConnectivityChange);
+        this.unsubscribable = NetInfo.addEventListener(this.handleConnectivityChange);
         // initial
-        NetInfo.isConnected.fetch()
-            .then(isConnected => {
+        NetInfo.fetch()
+            .then(state => {
                 this.safeSetState({
-                    networkAvailable: isConnected
+                    networkAvailable: state.isConnected
                 });
             });
 
@@ -93,10 +95,13 @@ class CachedImage extends React.Component {
 
     componentWillUnmount() {
         this._isMounted = false;
-        NetInfo.isConnected.removeEventListener('connectionChange', this.handleConnectivityChange);
+
+        if (typeof this.unsubscribable === "function") {
+            this.unsubscribable();
+        }
     }
 
-    componentWillReceiveProps(nextProps) {
+    componentDidUpdate(nextProps) {
         if (!_.isEqual(this.props.source, nextProps.source)) {
             this.processSource(nextProps.source);
         }
@@ -104,7 +109,7 @@ class CachedImage extends React.Component {
 
     setNativeProps(nativeProps) {
         try {
-            this.refs[CACHED_IMAGE_REF].setNativeProps(nativeProps);
+            this.CACHED_IMAGE_REF.setNativeProps(nativeProps);
         } catch (e) {
             console.error(e);
         }
@@ -131,9 +136,9 @@ class CachedImage extends React.Component {
         return this.setState(newState);
     }
 
-    handleConnectivityChange(isConnected) {
+    handleConnectivityChange(state) {
         this.safeSetState({
-            networkAvailable: isConnected
+            networkAvailable: state.isConnected
         });
     }
 
